@@ -245,3 +245,14 @@ class MirAIeBroker:
         await self.publish(
             topic, json.dumps(self.build_nanoe_payload(state))
         )
+
+    # Buzzer
+    def build_buzzer_payload(self, state: bool):
+        payload = self.build_base_payload()
+        payload["bzr"] = "on" if state else "off"
+        return payload
+
+    async def set_buzzer(self, topic: str, state: bool):
+        await self.publish(
+            topic, json.dumps(self.build_buzzer_payload(state))
+        )

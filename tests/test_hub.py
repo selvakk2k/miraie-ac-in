@@ -113,6 +113,41 @@ class TestMirAIeHub(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res["01012026"], 3.5)
         self.assertEqual(res["02012026"], 4.2)
 
+    async def test_get_model_capabilities_success(self):
+        """Test get_model_capabilities returns API JSON on HTTP 200."""
+        hub = MirAIeHub()
+        hub.user = User("token_abc", "refresh_abc", "usr_1", 3600)
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={
+            "modelNumber": "CS-CU-EU18CKY5XFM",
+            "controlCapabilities": {"PowerControl": ["on", "off"]}
+        })
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_resp)
+        hub.http = mock_session
+
+        res = await hub.get_model_capabilities("CS-CU-EU18CKY5XFM")
+        self.assertEqual(res["modelNumber"], "CS-CU-EU18CKY5XFM")
+        self.assertIn("PowerControl", res["controlCapabilities"])
+
+    async def test_get_model_capabilities_error_graceful_fallback(self):
+        """Test get_model_capabilities returns {} on HTTP failure or exception."""
+        hub = MirAIeHub()
+        hub.user = User("token_abc", "refresh_abc", "usr_1", 3600)
+        mock_resp = MagicMock()
+        mock_resp.status = 404
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_resp)
+        hub.http = mock_session
+
+        res = await hub.get_model_capabilities("INVALID_MODEL")
+        self.assertEqual(res, {})
+
+        # Empty model string
+        res_empty = await hub.get_model_capabilities("")
+        self.assertEqual(res_empty, {})
+
 
 if __name__ == "__main__":
     unittest.main()

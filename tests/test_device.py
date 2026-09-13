@@ -164,6 +164,46 @@ class TestDevice(unittest.IsolatedAsyncioTestCase):
             PresetMode.BOOST
         )
 
+    async def test_set_buzzer(self):
+        """Test set_buzzer dispatches through broker."""
+        self.mock_broker.set_buzzer = AsyncMock()
+        await self.device.set_buzzer(True)
+        self.mock_broker.set_buzzer.assert_awaited_with(
+            "miraie/v1/control/dev_living",
+            True
+        )
+
+    def test_status_handler_extracts_buzzer_and_diagnostics(self):
+        """Test status_handler parses bzr, errors, and warnings correctly."""
+        raw_payload = {
+            "actmp": "22.0",
+            "rmtmp": "25.0",
+            "ps": "on",
+            "acfs": "auto",
+            "acvs": 0,
+            "achs": 0,
+            "acdc": "on",
+            "acmd": "cool",
+            "acpm": "off",
+            "acem": "off",
+            "acec": "off",
+            "acfc": "on",
+            "bzr": "on",
+            "errors": "H11",
+            "warnings": "W01",
+        }
+        self.device.status_handler(raw_payload)
+        self.assertTrue(self.device.status.filter_clean_alert)
+        self.assertTrue(self.device.status.buzzer)
+        self.assertEqual(self.device.status.error_code, "H11")
+        self.assertEqual(self.device.status.warning_code, "W01")
+
+    def test_set_model_capabilities(self):
+        """Test model capabilities storage on Device."""
+        caps = {"controlCapabilities": {"BuzzerControl": ["on", "off"]}}
+        self.device.set_model_capabilities(caps)
+        self.assertEqual(self.device.model_capabilities, caps)
+
     async def test_headless_device_safe_close(self):
         """Test headless device (broker=None) can be closed safely without errors."""
         headless_dev = Device(

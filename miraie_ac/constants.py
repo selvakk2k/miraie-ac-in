@@ -4,5 +4,6 @@ homesUrl = "https://app.miraie.in/simplifi/v1/homeManagement/homes"
 statusUrl = "https://app.miraie.in/simplifi/v1/deviceManagement/devices/{deviceId}/mobile/status"
 deviceDetailsUrl = "https://app.miraie.in/simplifi/v1/deviceManagement/devices/deviceId"
 energyConsumptionUrl =  "https://app.miraie.in/simplifi/v1/powerConsumption/devices/{deviceId}?grain={periodType}&startDate={fromDate}&endDate={toDate}"
+modelCapabilitiesUrl = "https://app.miraie.in/simplifi/v1/deviceManagement/deviceModels/{modelNumber}"
 
 PACKAGE_NAME = "custom_components.miraie_in"

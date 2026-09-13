@@ -160,7 +160,26 @@ class MirAIeHub:
             LOGGER.debug(f'content_type: {response.content_type}')
             LOGGER.debug(f'text response: {await response.text()}')
             raise Exception("Unable to fetch device details failed")
-            
+
+    # Get model capabilities
+    async def get_model_capabilities(self, model_number: str) -> dict:
+        """Fetch model capabilities from MirAIe deviceManagement API."""
+        if not model_number:
+            return {}
+        try:
+            url = constants.modelCapabilitiesUrl.format(modelNumber=model_number)
+            response = await self.http.get(url, headers=self.__build_headers__())
+            if response.status == 200:
+                return await response.json()
+            LOGGER.warning(
+                "Failed to fetch model capabilities for %s (HTTP %s)",
+                model_number,
+                response.status,
+            )
+            return {}
+        except Exception as err:
+            LOGGER.warning("Error fetching model capabilities for %s: %s", model_number, err)
+            return {}
 
     # Process the home details
     async def _process_home_details(self, json_data):
@@ -212,6 +231,12 @@ class MirAIeHub:
                     product_serial_number=dd.get("productSerialNumber", ""),
                 )
                 device.set_details(details)
+                if details.model_number:
+                    try:
+                        caps = await self.get_model_capabilities(details.model_number)
+                        device.set_model_capabilities(caps)
+                    except Exception as e:
+                        LOGGER.warning("Could not load capabilities for %s: %s", details.model_number, e)
             except Exception as e:
                 LOGGER.warning("Incomplete device details for %s: %s", dd.get("deviceId"), e)
 

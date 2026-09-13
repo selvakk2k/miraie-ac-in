@@ -21,6 +21,9 @@ class DeviceStatus:
         converti_mode: ConvertiMode,
         nanoe_mode: str = "off",
         filter_clean_alert: bool = False,
+        buzzer: bool = False,
+        error_code: str = "",
+        warning_code: str = "",
         wifi_signal: int = 0,
         control_source: str = "an",
     ):
@@ -37,6 +40,9 @@ class DeviceStatus:
         self.converti_mode = converti_mode
         self.nanoe_mode = nanoe_mode
         self.filter_clean_alert = filter_clean_alert
+        self.buzzer = buzzer
+        self.error_code = error_code
+        self.warning_code = warning_code
         self.wifi_signal = wifi_signal
         self.control_source = control_source
         LOGGER.debug(f"Device status: {self.__str__()}")
@@ -56,6 +62,9 @@ class DeviceStatus:
             f"Converti mode: {self.converti_mode}\n" +
             f"Nanoe mode: {self.nanoe_mode}\n" +
             f"Filter clean alert: {self.filter_clean_alert}\n" +
+            f"Buzzer: {self.buzzer}\n" +
+            f"Error code: {self.error_code}\n" +
+            f"Warning code: {self.warning_code}\n" +
             f"Wifi signal: {self.wifi_signal}\n" +
             f"Control source: {self.control_source}\n"
         )
@@ -119,6 +128,7 @@ class Device:
         self.status_topic = status_topic
         self.connection_status_topic = connection_status_topic
         self.broker = broker
+        self.model_capabilities: dict = {}
 
         self._callbacks = set()
         if self.broker:
@@ -180,6 +190,9 @@ class Device:
             converti_mode=ConvertiMode(status.get("cnv", 0)),
             nanoe_mode=status.get("acngs", status.get("acng", "off")),
             filter_clean_alert=status.get("acfc", "off") == "on",
+            buzzer=status.get("bzr", "off") == "on",
+            error_code=str(status.get("errors", "") or ""),
+            warning_code=str(status.get("warnings", "") or ""),
             wifi_signal=int(status.get("rssi", 0)) if status.get("rssi") is not None else 0,
             control_source=status.get("cnt", "an"),
         )
@@ -193,6 +206,9 @@ class Device:
 
     def set_details(self, details: DeviceDetails):
         self.details = details
+
+    def set_model_capabilities(self, capabilities: dict):
+        self.model_capabilities = capabilities
 
     def set_status(self, status: DeviceStatus):
         self.status = status
@@ -229,3 +245,6 @@ class Device:
 
     async def set_nanoe(self, state: bool):
         await self.broker.set_nanoe(self.control_topic, state)
+
+    async def set_buzzer(self, state: bool):
+        await self.broker.set_buzzer(self.control_topic, state)
