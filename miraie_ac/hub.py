@@ -81,6 +81,9 @@ class MirAIeHub:
 
         try:
             await asyncio.wait_for(broker.connected.wait(), timeout=30)
+            if getattr(self, "home", None) and getattr(self.home, "devices", None):
+                for dev in self.home.devices:
+                    dev.refresh()
         except (asyncio.TimeoutError, TimeoutError):
             LOGGER.warning(
                 "MQTT broker connection did not complete within 30s; "
