@@ -123,8 +123,11 @@ class TestMirAIeHub(unittest.IsolatedAsyncioTestCase):
             "modelNumber": "CS-CU-EU18CKY5XFM",
             "controlCapabilities": {"PowerControl": ["on", "off"]}
         })
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
         mock_session = MagicMock()
-        mock_session.get = AsyncMock(return_value=mock_resp)
+        mock_session.get = MagicMock(return_value=mock_cm)
         hub.http = mock_session
 
         res = await hub.get_model_capabilities("CS-CU-EU18CKY5XFM")
@@ -137,8 +140,11 @@ class TestMirAIeHub(unittest.IsolatedAsyncioTestCase):
         hub.user = User("token_abc", "refresh_abc", "usr_1", 3600)
         mock_resp = MagicMock()
         mock_resp.status = 404
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
         mock_session = MagicMock()
-        mock_session.get = AsyncMock(return_value=mock_resp)
+        mock_session.get = MagicMock(return_value=mock_cm)
         hub.http = mock_session
 
         res = await hub.get_model_capabilities("INVALID_MODEL")
@@ -147,6 +153,20 @@ class TestMirAIeHub(unittest.IsolatedAsyncioTestCase):
         # Empty model string
         res_empty = await hub.get_model_capabilities("")
         self.assertEqual(res_empty, {})
+
+    async def test_get_model_capabilities_timeout_fallback(self):
+        """Test get_model_capabilities handles request timeout gracefully."""
+        hub = MirAIeHub()
+        hub.user = User("token_abc", "refresh_abc", "usr_1", 3600)
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError("Stalled capability endpoint"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=mock_cm)
+        hub.http = mock_session
+
+        res = await hub.get_model_capabilities("TIMEOUT_MODEL")
+        self.assertEqual(res, {})
 
 
 if __name__ == "__main__":

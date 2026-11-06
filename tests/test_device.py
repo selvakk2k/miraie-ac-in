@@ -216,6 +216,35 @@ class TestDevice(unittest.IsolatedAsyncioTestCase):
             broker=None,
         )
         headless_dev.close()
+        self.assertIsNone(headless_dev.details)
+
+    def test_device_status_positional_arguments_compatibility(self):
+        """Test DeviceStatus preserves backwards-compatible positional argument order."""
+        status = DeviceStatus(
+            True,                 # is_online
+            24.0,                 # temperature
+            26.0,                 # room_temperature
+            PowerMode.ON,         # power_mode
+            FanMode.AUTO,         # fan_mode
+            SwingMode.AUTO,       # v_swing_mode
+            SwingMode.AUTO,       # h_swing_mode
+            DisplayMode.ON,       # display_mode
+            HVACMode.COOL,        # hvac_mode
+            PresetMode.NONE,      # preset_mode
+            ConvertiMode.OFF,     # converti_mode
+            "off",                # nanoe_mode
+            False,                # filter_clean_alert
+            -65,                  # wifi_signal
+            "ir",                 # control_source
+            True,                 # buzzer
+            "H11",                # error_code
+            "W01",                # warning_code
+        )
+        self.assertEqual(status.wifi_signal, -65)
+        self.assertEqual(status.control_source, "ir")
+        self.assertTrue(status.buzzer)
+        self.assertEqual(status.error_code, "H11")
+        self.assertEqual(status.warning_code, "W01")
 
 
 if __name__ == "__main__":

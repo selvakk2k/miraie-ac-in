@@ -83,7 +83,10 @@ class MirAIeHub:
             await asyncio.wait_for(broker.connected.wait(), timeout=30)
             if getattr(self, "home", None) and getattr(self.home, "devices", None):
                 for dev in self.home.devices:
-                    dev.refresh()
+                    try:
+                        dev.refresh()
+                    except Exception as err:
+                        LOGGER.warning("Error refreshing device %s on broker connect: %s", dev.id, err)
         except (asyncio.TimeoutError, TimeoutError):
             LOGGER.warning(
                 "MQTT broker connection did not complete within 30s; "
@@ -171,15 +174,16 @@ class MirAIeHub:
             return {}
         try:
             url = constants.modelCapabilitiesUrl.format(modelNumber=model_number)
-            response = await self.http.get(url, headers=self.__build_headers__())
-            if response.status == 200:
-                return await response.json()
-            LOGGER.warning(
-                "Failed to fetch model capabilities for %s (HTTP %s)",
-                model_number,
-                response.status,
-            )
-            return {}
+            timeout = aiohttp.ClientTimeout(total=5.0)
+            async with self.http.get(url, headers=self.__build_headers__(), timeout=timeout) as response:
+                if response.status == 200:
+                    return await response.json()
+                LOGGER.warning(
+                    "Failed to fetch model capabilities for %s (HTTP %s)",
+                    model_number,
+                    response.status,
+                )
+                return {}
         except Exception as err:
             LOGGER.warning("Error fetching model capabilities for %s: %s", model_number, err)
             return {}
@@ -234,14 +238,29 @@ class MirAIeHub:
                     product_serial_number=dd.get("productSerialNumber", ""),
                 )
                 device.set_details(details)
-                if details.model_number:
-                    try:
-                        caps = await self.get_model_capabilities(details.model_number)
-                        device.set_model_capabilities(caps)
-                    except Exception as e:
-                        LOGGER.warning("Could not load capabilities for %s: %s", details.model_number, e)
             except Exception as e:
                 LOGGER.warning("Incomplete device details for %s: %s", dd.get("deviceId"), e)
+
+        # Concurrently fetch capabilities for all devices with a model number
+        cap_tasks = []
+        cap_devices = []
+        for dev in devices:
+            details = getattr(dev, "details", None)
+            if details and getattr(details, "model_number", None):
+                cap_devices.append(dev)
+                cap_tasks.append(self.get_model_capabilities(details.model_number))
+
+        if cap_tasks:
+            results = await asyncio.gather(*cap_tasks, return_exceptions=True)
+            for dev, result in zip(cap_devices, results):
+                if isinstance(result, dict) and result:
+                    dev.set_model_capabilities(result)
+                elif isinstance(result, Exception):
+                    LOGGER.warning(
+                        "Could not load capabilities for %s: %s",
+                        getattr(getattr(dev, "details", None), "model_number", ""),
+                        result,
+                    )
 
         self.home = Home(id=json_data.get("homeId", ""), devices=devices)
         return self.home

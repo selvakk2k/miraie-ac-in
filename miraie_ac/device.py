@@ -21,11 +21,11 @@ class DeviceStatus:
         converti_mode: ConvertiMode,
         nanoe_mode: str = "off",
         filter_clean_alert: bool = False,
+        wifi_signal: int = 0,
+        control_source: str = "an",
         buzzer: bool = False,
         error_code: str = "",
         warning_code: str = "",
-        wifi_signal: int = 0,
-        control_source: str = "an",
     ):
         self.is_online = is_online
         self.temperature = temperature
@@ -128,6 +128,7 @@ class Device:
         self.status_topic = status_topic
         self.connection_status_topic = connection_status_topic
         self.broker = broker
+        self.details = None
         self.model_capabilities: dict = {}
 
         self._callbacks = set()

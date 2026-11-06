@@ -86,6 +86,7 @@ asyncio.run(main())
 ### Fork Maintainers & Contributors
 * **Lead Architecture & API Design**: [@selvakk2k](https://github.com/selvakk2k) — physical device telemetry capture, MQTT protocol analysis, and domain requirements.
 * **Code Implementation & Engineering**: **Antigravity** (Google DeepMind) — asyncio MQTT connection lifecycles, memory leak resolution, Converti 8-in-1 decoding, and pytest suite.
+* **Automated Code Review & Auditing**: **CodeRabbit** ([@coderabbitai](https://github.com/coderabbitai)) — automated pull request and pre-commit code reviews, edge case detection, and security verification.
 * **Pre-Release Code Review & Auditing**: **Claude** (Anthropic) — independent architectural review, code audits, and edge-case verification.
 
 Licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
