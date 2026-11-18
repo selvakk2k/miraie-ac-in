@@ -1,12 +1,15 @@
 [tool.poetry]
 name = "miraie-ac-in"
-version = "1.3.0"
-description = "MirAIe-AC API client for Python with local UDP and cloud MQTT support"
+version = "1.4.0"
+description = "MirAIe-AC API client and CLI for Python with local UDP and cloud MQTT support"
 authors = ["Raj Kishore <40551183+rkzofficial@users.noreply.github.com>", "Ali Jafri <deCodeIt@users.noreply.github.com>", "Harith <82406332+gutpull@users.noreply.github.com>", "Selva Kumaran K <57052370+selvakk2k@users.noreply.github.com>"]
 maintainers = ["Selva Kumaran K <57052370+selvakk2k@users.noreply.github.com>"]
 license = "MIT"
 readme = "README.md"
 packages = [{include = "miraie_ac"}]
+
+[tool.poetry.scripts]
+miraie-ac = "miraie_ac.cli:main"
 
 [tool.poetry.dependencies]
 python = "^3.8"

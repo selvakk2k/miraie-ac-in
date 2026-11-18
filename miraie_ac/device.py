@@ -452,61 +452,105 @@ class Device:
                 callback=self.status_handler,
             )
 
-    async def _send_command(self, cmd_dict: dict, broker_coro: Callable):
-        """Send command via Local UDP if enabled and available, falling back to MQTT."""
-        res = None
-        if self.use_local_udp and self.udp_transport and self.supports_local_udp:
-            try:
-                details = getattr(self, "details", None)
-                if details and self.id not in getattr(self.udp_transport, "_devices", {}):
-                    self.udp_transport.register_device(
-                        device_id=self.id,
-                        mac=details.mac_address,
-                        key=details.udp_control_key,
-                        iv=details.udp_control_iv,
-                        multicast_ip=getattr(details, "multicast_ip", None),
-                        callback=self.status_handler,
-                    )
-                res = await self.udp_transport.send_command(self.id, cmd_dict)
-            except Exception as err:
-                LOGGER.warning("UDP command failed for %s, falling back to MQTT: %s", self.id, err)
+    async def send_udp_command(self, cmd_dict: dict) -> dict:
+        """Send command strictly via Local UDP transport and update status on ACK."""
+        if not self.udp_transport:
+            raise RuntimeError(f"No UDP transport attached to device {self.id}")
+        if not self.supports_local_udp:
+            raise RuntimeError(f"Device {self.id} does not support local UDP (missing keys)")
+
+        try:
+            details = getattr(self, "details", None)
+            if details and self.id not in getattr(self.udp_transport, "_devices", {}):
+                self.udp_transport.register_device(
+                    device_id=self.id,
+                    mac=details.mac_address,
+                    key=details.udp_control_key,
+                    iv=details.udp_control_iv,
+                    multicast_ip=getattr(details, "multicast_ip", None),
+                    callback=self.status_handler,
+                )
+            res = await self.udp_transport.send_command(self.id, cmd_dict)
+        except Exception as err:
+            raise RuntimeError(f"Local UDP command failed for device {self.id}: {err}") from err
         if res and isinstance(res, dict) and any(k in res for k in cmd_dict):
-            self.status_handler(res)
+            return res
+        raise RuntimeError(f"Local UDP command failed or rejected by device {self.id}: {res}")
+
+    async def send_cloud_command(self, broker_coro: Callable):
+        """Send command strictly via Cloud MQTT broker."""
+        if not self.broker:
+            raise RuntimeError(f"No MQTT broker configured for device {self.id}")
+        if not callable(broker_coro):
+            raise TypeError(f"broker_coro must be callable, got {type(broker_coro).__name__}")
+        await broker_coro()
+
+    async def _send_command(
+        self, cmd_dict: dict, broker_coro: Callable, transport: str | None = None
+    ):
+        """Send command via requested transport, with optional broker fallback when transport is None."""
+        if transport == "udp":
+            await self.send_udp_command(cmd_dict)
             return
-        if callable(broker_coro) and self.broker:
-            await broker_coro()
-        elif not (res and isinstance(res, dict) and any(k in res for k in cmd_dict)):
-            raise RuntimeError(f"Command failed via UDP and no MQTT broker configured for {self.id}")
+        elif transport == "cloud":
+            await self.send_cloud_command(broker_coro)
+            return
+        elif transport is not None:
+            raise ValueError(f"Unknown transport: {transport}")
+
+        # Default mode (transport is None): try UDP if supported/enabled, with broker fallback if configured
+        if self.use_local_udp and self.supports_local_udp and self.udp_transport:
+            try:
+                await self.send_udp_command(cmd_dict)
+                return
+            except Exception as err:
+                if self.broker:
+                    LOGGER.warning("UDP command failed for %s, falling back to MQTT: %s", self.id, err)
+                    await self.send_cloud_command(broker_coro)
+                    return
+                raise
+        await self.send_cloud_command(broker_coro)
 
     def set_status(self, status: DeviceStatus):
         self.status = status
 
-    async def turn_on(self):
-        await self._send_command({"ps": "on"}, lambda: self.broker.set_power(self.control_topic, PowerMode.ON))
+    async def turn_on(self, transport: str | None = None):
+        await self._send_command(
+            {"ps": "on"},
+            lambda: self.broker.set_power(self.control_topic, PowerMode.ON),
+            transport=transport,
+        )
 
-    async def turn_off(self):
-        await self._send_command({"ps": "off"}, lambda: self.broker.set_power(self.control_topic, PowerMode.OFF))
+    async def turn_off(self, transport: str | None = None):
+        await self._send_command(
+            {"ps": "off"},
+            lambda: self.broker.set_power(self.control_topic, PowerMode.OFF),
+            transport=transport,
+        )
 
-    async def set_temperature(self, temperature: float):
+    async def set_temperature(self, temperature: float, transport: str | None = None):
         t_val = int(temperature) if float(temperature).is_integer() else temperature
         await self._send_command(
             {"actmp": str(t_val)},
             lambda: self.broker.set_temperature(self.control_topic, temperature),
+            transport=transport,
         )
 
-    async def set_hvac_mode(self, mode: HVACMode):
+    async def set_hvac_mode(self, mode: HVACMode, transport: str | None = None):
         await self._send_command(
             {"acmd": str(mode.value)},
             lambda: self.broker.set_hvac_mode(self.control_topic, mode),
+            transport=transport,
         )
 
-    async def set_fan_mode(self, mode: FanMode):
+    async def set_fan_mode(self, mode: FanMode, transport: str | None = None):
         await self._send_command(
             {"acfs": str(mode.value)},
             lambda: self.broker.set_fan_mode(self.control_topic, mode),
+            transport=transport,
         )
 
-    async def set_preset_mode(self, mode: PresetMode):
+    async def set_preset_mode(self, mode: PresetMode, transport: str | None = None):
         if self.broker and hasattr(self.broker, "build_preset_mode_payload"):
             cmd = self.broker.build_preset_mode_payload(mode)
             cmd_pure = {k: v for k, v in cmd.items() if k not in ("ki", "cnt", "sid")}
@@ -523,44 +567,51 @@ class Device:
         await self._send_command(
             cmd_pure,
             lambda: self.broker.set_preset_mode(self.control_topic, mode),
+            transport=transport,
         )
 
-    async def set_v_swing_mode(self, mode: SwingMode):
+    async def set_v_swing_mode(self, mode: SwingMode, transport: str | None = None):
         await self._send_command(
             {"acvs": mode.value},
             lambda: self.broker.set_v_swing_mode(self.control_topic, mode),
+            transport=transport,
         )
-        
-    async def set_h_swing_mode(self, mode: SwingMode):
+
+    async def set_h_swing_mode(self, mode: SwingMode, transport: str | None = None):
         await self._send_command(
             {"achs": mode.value},
             lambda: self.broker.set_h_swing_mode(self.control_topic, mode),
+            transport=transport,
         )
-        
-    async def set_display_mode(self, mode: DisplayMode):
+
+    async def set_display_mode(self, mode: DisplayMode, transport: str | None = None):
         await self._send_command(
             {"acdc": str(mode.value)},
             lambda: self.broker.set_display_mode(self.control_topic, mode),
+            transport=transport,
         )
-    
-    async def set_converti_mode(self, mode: ConvertiMode):
+
+    async def set_converti_mode(self, mode: ConvertiMode, transport: str | None = None):
         val = int(mode.value) if hasattr(mode, "value") else int(mode)
         await self._send_command(
             {"cnv": val, "acem": "off", "acpm": "off"},
             lambda: self.broker.set_converti_mode(self.control_topic, mode),
+            transport=transport,
         )
 
-    async def set_nanoe(self, state: bool):
+    async def set_nanoe(self, state: bool, transport: str | None = None):
         val = "on" if state else "off"
         key = "acngs" if any(c.get("capability") == "NanoeX" for c in self._get_control_capabilities()) else "acng"
         await self._send_command(
             {key: val},
             lambda: self.broker.set_nanoe(self.control_topic, state),
+            transport=transport,
         )
 
-    async def set_buzzer(self, state: bool):
+    async def set_buzzer(self, state: bool, transport: str | None = None):
         val = "on" if state else "off"
         await self._send_command(
             {"bzr": val},
             lambda: self.broker.set_buzzer(self.control_topic, state),
+            transport=transport,
         )

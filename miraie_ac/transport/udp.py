@@ -166,6 +166,7 @@ class LocalUdpTransportManager:
         self._callbacks: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, None] | None]] = {}
         self._pending_commands: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._pending_discoveries: dict[str, asyncio.Future[str]] = {}
+        self._subnet_discovery_cb: Callable[[str, str], None] | None = None
         self._transport: asyncio.DatagramTransport | None = None
         self._lock = asyncio.Lock()
         self._is_running = False
@@ -295,6 +296,30 @@ class LocalUdpTransportManager:
         finally:
             self._pending_discoveries.pop(clean_mac, None)
 
+    async def discover_subnet(self, timeout: float = 3.0) -> list[dict[str, str]]:
+        """Broadcast generic discovery probe DISC and collect responding AC IP and MACs."""
+        if not self._is_running:
+            await self.start()
+
+        disc_req = b"DISC"
+        discovered: dict[str, str] = {}
+
+        # Temporarily record discovery responses
+        def _on_discovered(mac: str, ip: str) -> None:
+            discovered[mac] = ip
+
+        self._subnet_discovery_cb = _on_discovered
+
+        try:
+            if self._transport:
+                self._transport.sendto(disc_req, (BROADCAST_ADDRESS, DISCOVERY_PORT))
+                _LOGGER.debug("Broadcasted subnet probe DISC to %s:%s", BROADCAST_ADDRESS, DISCOVERY_PORT)
+            await asyncio.sleep(timeout)
+        finally:
+            self._subnet_discovery_cb = None
+
+        return [{"mac": mac, "ip": ip} for mac, ip in discovered.items()]
+
     async def send_command(
         self,
         device_id: str,
@@ -357,6 +382,9 @@ class LocalUdpTransportManager:
             # Fulfill pending discovery future
             if mac_part in self._pending_discoveries and not self._pending_discoveries[mac_part].done():
                 self._pending_discoveries[mac_part].set_result(sender_ip)
+
+            if getattr(self, "_subnet_discovery_cb", None):
+                self._subnet_discovery_cb(mac_part, sender_ip)
             return
 
         # 2. Handle TLV Encrypted Status/ACK packet

@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import aiohttp
 import asyncio
 from datetime import date, timedelta
+from typing import Optional
 
 from dateutil.relativedelta import relativedelta
 
@@ -56,7 +59,7 @@ class MirAIeHub:
             "Content-Type": "application/json",
         }
 
-    async def init(self, username: str, password: str, broker: MirAIeBroker):
+    async def init(self, username: str, password: str, broker: Optional[MirAIeBroker] = None):
         if self.http is None:
             self.http = aiohttp.ClientSession()
 
@@ -65,7 +68,8 @@ class MirAIeHub:
         await self._authenticate(username, password)
         await self._get_home_details()
         await self.get_all_device_status()
-        await self._init_broker(broker)
+        if broker is not None:
+            await self._init_broker(broker)
 
     async def _init_broker(self, broker: MirAIeBroker):
         topics = self.get_device_topics()

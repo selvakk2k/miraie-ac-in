@@ -332,8 +332,8 @@ class TestDevice(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.device.supports_nanoe)
         self.assertTrue(self.device.supports_buzzer)
 
-    async def test_send_command_falls_back_when_reply_lacks_command_keys(self):
-        """Test _send_command falls back to MQTT when reply lacks requested command keys."""
+    async def test_send_udp_command_raises_when_reply_lacks_command_keys(self):
+        """Test send_udp_command raises RuntimeError when reply lacks requested command keys."""
         mock_transport = AsyncMock()
         mock_transport.register_device = MagicMock()
         # Reply contains telemetry but lacks 'ps'
@@ -342,11 +342,19 @@ class TestDevice(unittest.IsolatedAsyncioTestCase):
         self.device.attach_udp_transport(mock_transport)
         self.mock_broker.set_power = AsyncMock()
 
-        await self.device.turn_on()
-        # Should fall back to broker since 'ps' was not in the UDP response
+        # Without hardcoded fallback, it raises so the caller (e.g. coordinator) can handle failover
+        with self.assertRaises(RuntimeError):
+            await self.device.turn_on(transport="udp")
+
+        # Explicit cloud dispatch routes directly to broker without sending UDP
+        await self.device.turn_on(transport="cloud")
         self.mock_broker.set_power.assert_awaited_once_with(
             "miraie/v1/control/dev_living",
             PowerMode.ON,
+        )
+        mock_transport.send_command.assert_awaited_once_with(
+            "dev_living",
+            {"ps": "on"},
         )
 
     def test_status_handler_malformed_actmp(self):
