@@ -8,22 +8,22 @@
   <a href="https://aiattribution.github.io/interpret-attribution"><img src="https://img.shields.io/badge/AI%20Attribution-AIA%20PAI%20Nc%20Hin-orange?style=flat-square" alt="AI Attribution"></a>
 </p>
 
-A Python API client wrapper for controlling Panasonic MirAIe-enabled Air Conditioners. This library handles MQTT message parsing, connection loops, and telemetry status decoding.
-
-This repository is a feature fork of `rkzofficial/miraie-ac` to provide updates for newer firmware versions, expand capacity control options, and improve connection stability.
+A Python client library for controlling Panasonic MirAIe smart air conditioners. It supports direct local UDP control on LAN, cloud MQTT communication, dynamic hardware capability lookup, and telemetry decoding.
 
 > [!IMPORTANT]
-> This project is designed **exclusively** for Panasonic Air Conditioners that use the **MirAIe** application. It is **not compatible** with Panasonic ACs that use the global **Comfort Cloud** application.
+> This library is designed exclusively for Panasonic Air Conditioners that use the **MirAIe** application. It is not compatible with models that use Panasonic Comfort Cloud.
 
 ---
 
-## Enhancements in This Fork
+## Features
 
-* **Firmware 3.02+ Room Temperature Fix**: Panasonic AC units running firmware `3.02+` report ambient room temperature in a packed decimal format. This fork introduces version-aware decoding to display this value correctly, while retaining traditional decoding for older firmware.
-* **Converti 8-in-1 Support**: Expands compressor capacity control options by mapping the `60%` and `50%` steps, enabling full 8-in-1 capacity features on supported models.
-* **MQTT & Resource Lifecycle Cleanup**: Adds an explicit `close()` method to cleanly cancel and await active MQTT tasks and terminate the underlying HTTP client session, preventing resource leaks.
-* **Telemetry Parsing**: Adds status parsing for Nanoe™ air purifiers (`acng`), Filter Clean alerts (`acfc`), Wi-Fi RSSI signal strength (`rssi`), and last control source (`cnt`).
-* **Input Validation**: Upgraded user credential validation with improved regex supporting subdomains and hyphenated domains.
+* **Local UDP Control**: Direct local network control on UDP ports 5001 and 5002 using AES-256-CBC encryption, providing fast command execution (under 30 ms) without requiring internet access.
+* **Automatic Cloud Fallback**: Automatically falls back to cloud MQTT if a local UDP command is dropped or the device is unreachable on LAN.
+* **Dynamic Hardware Capabilities**: Automatically reads supported features per model (0.5°C vs 1.0°C temperature steps, motorized horizontal swing, night display mode, convertible capacity percentages, Nanoe air purification, and buzzer controls).
+* **Firmware 3.02+ Temperature Support**: Decodes high-resolution ambient room temperature reported by newer firmware versions, while retaining standard decoding for older firmware.
+* **Convertible Capacity Modes**: Supports 4-in-1, 7-in-1, and 8-in-1 compressor profiles (40% to 110%).
+* **Telemetry & Diagnostics**: Parses power state, fan speed, swing modes, Nanoe status, filter cleaning alerts, Wi-Fi RSSI signal strength, error codes, and control sources.
+* **Resource Lifecycle Management**: Provides an async `close()` method to clean up network sockets, background tasks, and HTTP client sessions.
 
 ---
 
@@ -47,20 +47,21 @@ async def main():
     broker = MirAIeBroker()
     hub = MirAIeHub()
 
-    # Initialize the hub (phone number format: +91XXXXXXXXXX)
+    # Sign in using your registered mobile number or email
     await hub.init("+919999999999", "your_password", broker)
     
-    # List discovered devices
-    print("Discovered Devices:", hub.home.devices)
-    
-    # Wait for the MQTT connection to establish
-    while not hasattr(broker, "client") or getattr(broker, "client") is None:
-        await asyncio.sleep(1)
-
-    # Example: Turn off the first device
+    # List discovered devices and hardware capabilities
+    for device in hub.home.devices:
+        print(f"Device: {device.friendly_name} (ID: {device.id})")
+        print(f"  Local UDP Supported: {device.supports_local_udp}")
+        print(f"  Temp Step: {device.target_temperature_step}°C")
+        print(f"  Horizontal Swing: {device.supports_horizontal_swing}")
+        
+    # Example: Control a device
     if hub.home.devices:
         device = hub.home.devices[0]
-        await device.turn_off()
+        await device.turn_on()
+        await device.set_temperature(24.0)
         
     await hub.close()
 
@@ -76,19 +77,21 @@ asyncio.run(main())
 | [Panasonic AC Models](https://github.com/selvakk2k/panasonic-ac-models) | `panasonic-ac-models` | Hardware profiles, capability lookup & IR protocol generator for Indian Panasonic ACs | `Stable` |
 | [IFB Washer Models](https://github.com/selvakk2k/ifb-washer-models) | `ifb-washer-models` | Unified hardware database, model lookup & cycle capability gating for IFB smart washers | `Stable` |
 | [MirAIe AC API Client](https://github.com/selvakk2k/miraie-ac-in) | `miraie-ac-in` | Async MQTT & REST API client for Panasonic MirAIe-connected Air Conditioners | `Stable` |
+| [Qubopy](https://github.com/selvakk2k/qubopy) | `qubopy` | Async client & CLI for Hero Qubo cameras, smart locks, air purifiers & smart home devices | `Stable` |
+| [PyAtomberg](https://github.com/selvakk2k/pyatomberg) | `pyatomberg` | Async client for Atomberg smart locks (BLE/Wi-Fi), ceiling fans & home appliances | `Stable` |
 
 ---
 
 ## Credits & License
 
-### Upstream Authors & Contributors
-* Originally authored and developed by [@rkzofficial](https://github.com/rkzofficial).
-* Features contributed by upstream community developers: [@deCodeIt](https://github.com/deCodeIt), [@gutpull](https://github.com/gutpull), and [@ankitduseja](https://github.com/ankitduseja).
+### Contributors & Protocol Research
+* **Protocol Research & Initial Library**: [@rkzofficial](https://github.com/rkzofficial), [@deCodeIt](https://github.com/deCodeIt), [@gutpull](https://github.com/gutpull), and [@ankitduseja](https://github.com/ankitduseja).
+* **Local UDP Protocol**: [@nikhilag](https://github.com/nikhilag) ([ha-panasonic-miraie-local](https://github.com/nikhilag/ha-panasonic-miraie-local)) for the initial reverse engineering of the local AES-256-CBC UDP protocol.
 
-### Fork Maintainers & Contributors
-* **Lead Architecture & API Design**: [@selvakk2k](https://github.com/selvakk2k) — physical device telemetry capture, MQTT protocol analysis, and domain requirements.
-* **Code Implementation & Engineering**: **Antigravity** (Google DeepMind) — asyncio MQTT connection lifecycles, memory leak resolution, Converti 8-in-1 decoding, and pytest suite.
-* **Automated Code Review & Auditing**: **CodeRabbit** ([@coderabbitai](https://github.com/coderabbitai)) — automated pull request and pre-commit code reviews, edge case detection, and security verification.
-* **Pre-Release Code Review & Auditing**: **Claude** (Anthropic) — independent architectural review, code audits, and edge-case verification.
+### Maintenance & Development
+* **Lead Architecture & Hardware Testing**: [@selvakk2k](https://github.com/selvakk2k) — physical device telemetry capture, protocol analysis, and hardware verification.
+* **Code Implementation & Engineering**: **Antigravity** (Google DeepMind) — asyncio local UDP transport, dynamic capabilities, resource management, and test suite.
+* **Automated Code Review**: **CodeRabbit** ([@coderabbitai](https://github.com/coderabbitai)) — automated pull request and pre-commit code reviews.
+* **Code Review & Auditing**: **Claude** (Anthropic) — code auditing and verification.
 
 Licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
