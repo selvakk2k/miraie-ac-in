@@ -112,7 +112,7 @@ miraie-ac listen --transport udp --device-id 8c53afca6252 --key "$MIRAIE_KEY" --
 
 ### Contributors & Protocol Research
 * **Protocol Research & Initial Library**: [@rkzofficial](https://github.com/rkzofficial), [@deCodeIt](https://github.com/deCodeIt), [@gutpull](https://github.com/gutpull), and [@ankitduseja](https://github.com/ankitduseja).
-* **Local UDP Protocol**: [@nikhilag](https://github.com/nikhilag) ([ha-panasonic-miraie-local](https://github.com/nikhilag/ha-panasonic-miraie-local)) for the initial reverse engineering of the local AES-256-CBC UDP protocol.
+* **Local UDP Protocol**: [@dtechterminal](https://github.com/dtechterminal) ([ha-panasonic-miraie-local](https://github.com/dtechterminal/ha-panasonic-miraie-local)) for the initial reverse engineering of the local AES-256-CBC UDP protocol.
 
 ### Maintenance & Development
 * **Lead Architecture & Hardware Testing**: [@selvakk2k](https://github.com/selvakk2k) — physical device telemetry capture, protocol analysis, and hardware verification.
