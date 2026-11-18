@@ -1,10 +1,12 @@
 # MirAIe AC API Client (`miraie-ac-in`)
 
-[![PyPI version](https://badge.fury.io/py/miraie-ac-in.svg)](https://badge.fury.io/py/miraie-ac-in)
-[![Python Version](https://img.shields.io/pypi/pyversions/miraie-ac-in.svg)](https://pypi.org/project/miraie-ac-in/)
-[![Version](https://img.shields.io/github/v/release/selvakk2k/miraie-ac-in?style=flat-square)](https://github.com/selvakk2k/miraie-ac-in/releases)
-[![AI-Assisted](https://img.shields.io/badge/AI%20Assisted-Antigravity%20%7C%20Claude-blueviolet?style=flat-square&logo=google)](https://github.com/selvakk2k)
-[![AI Attribution](https://img.shields.io/badge/AI%20Attribution-AIA%20PAI%20Nc%20Hin-orange?style=flat-square)](https://aiattribution.github.io/interpret-attribution)
+<p align="center">
+  <a href="https://pypi.org/project/miraie-ac-in/"><img src="https://img.shields.io/pypi/v/miraie-ac-in?style=flat-square" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/miraie-ac-in/"><img src="https://img.shields.io/pypi/pyversions/miraie-ac-in?style=flat-square" alt="Python Version"></a>
+  <a href="https://github.com/selvakk2k/miraie-ac-in/releases"><img src="https://img.shields.io/github/v/release/selvakk2k/miraie-ac-in?style=flat-square" alt="Version"></a>
+  <a href="https://github.com/selvakk2k"><img src="https://img.shields.io/badge/AI%20Assisted-Antigravity%20%7C%20Claude%20%7C%20CodeRabbit-blueviolet?style=flat-square" alt="AI-Assisted"></a>
+  <a href="https://aiattribution.github.io/interpret-attribution"><img src="https://img.shields.io/badge/AI%20Attribution-AIA%20PAI%20Nc%20Hin-orange?style=flat-square" alt="AI Attribution"></a>
+</p>
 
 A Python API client wrapper for controlling Panasonic MirAIe-enabled Air Conditioners. This library handles MQTT message parsing, connection loops, and telemetry status decoding.
 
