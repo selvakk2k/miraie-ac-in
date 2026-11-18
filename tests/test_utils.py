@@ -10,12 +10,17 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(parse_room_temp("61.26", "3.02"), 26.24)
         self.assertEqual(parse_room_temp("01.28", "3.02"), 28.00)
         self.assertEqual(parse_room_temp("00.24", "3.02"), 24.00)
+        # Numeric float carrying packed bits (> 50.0) is also decoded properly
+        self.assertEqual(parse_room_temp(128.28, "3.02"), 28.50)
 
     def test_parse_room_temp_edge_cases(self):
         # Zero/uninitialized temperature returns None
         self.assertIsNone(parse_room_temp("00.0", "3.02"))
         # None or empty
         self.assertIsNone(parse_room_temp(None, "3.02"))
+        # Numeric inputs are returned directly as float, bypassing packed string logic
+        self.assertEqual(parse_room_temp(24.5, "3.02"), 24.5)
+        self.assertEqual(parse_room_temp(24, "3.02"), 24.0)
 
     def test_parse_room_temp_legacy_firmware(self):
         # Older firmware (e.g. 2.0 or 3.0) returns float directly

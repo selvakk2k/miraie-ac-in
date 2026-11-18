@@ -246,6 +246,119 @@ class TestDevice(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.error_code, "H11")
         self.assertEqual(status.warning_code, "W01")
 
+    def test_status_handler_string_swing_modes(self):
+        """Test status_handler handles string-encoded swing modes without error."""
+        raw_payload = {
+            "ps": "on",
+            "actmp": "24",
+            "acvs": "2",
+            "achs": "1",
+        }
+        self.device.status_handler(raw_payload)
+        self.assertEqual(self.device.status.v_swing_mode, SwingMode(2))
+        self.assertEqual(self.device.status.h_swing_mode, SwingMode(1))
+
+    async def test_offline_preset_mode_without_broker(self):
+        """Test preset mode generates pure command dictionary when broker is None."""
+        dev = Device(
+            id="offline_dev",
+            name="Offline AC",
+            friendly_name="Offline AC",
+            control_topic="ctrl",
+            status_topic="stat",
+            connection_status_topic="conn",
+            broker=None,
+        )
+        mock_transport = AsyncMock()
+        mock_transport.register_device = MagicMock()
+        mock_transport.send_command = AsyncMock(return_value={"ps": "on", "acec": "on"})
+        dev.details = AsyncMock(udp_control_key="key", udp_control_iv="iv", mac_address="00:11:22:33:44:55", multicast_ip=None)
+        dev.attach_udp_transport(mock_transport)
+
+        await dev.set_preset_mode(PresetMode.CLEAN)
+        mock_transport.send_command.assert_awaited_once_with(
+            "offline_dev",
+            {"acpm": "off", "acem": "off", "acec": "on"},
+        )
+
+    def test_status_handler_empty_rssi(self):
+        """Test status_handler safely ignores empty or whitespace rssi string."""
+        raw_payload = {
+            "ps": "on",
+            "rssi": "",
+        }
+        self.device.status_handler(raw_payload)
+        self.assertEqual(self.device.status.wifi_signal, 0)
+
+    async def test_brokerless_udp_failure_raises_runtime_error(self):
+        """Test brokerless device raises RuntimeError on UDP command failure."""
+        dev = Device(
+            id="offline_dev_fail",
+            name="Offline AC",
+            friendly_name="Offline AC",
+            control_topic="ctrl",
+            status_topic="stat",
+            connection_status_topic="conn",
+            broker=None,
+        )
+        mock_transport = AsyncMock()
+        mock_transport.register_device = MagicMock()
+        mock_transport.send_command = AsyncMock(side_effect=Exception("Socket timeout"))
+        dev.details = AsyncMock(udp_control_key="key", udp_control_iv="iv", mac_address="00:11:22:33:44:55", multicast_ip=None)
+        dev.attach_udp_transport(mock_transport)
+
+        with self.assertRaises(RuntimeError):
+            await dev.turn_on()
+        mock_transport.send_command.assert_awaited_once_with("offline_dev_fail", {"ps": "on"})
+
+    async def test_set_nanoe_with_dict_control_capabilities(self):
+        """Test set_nanoe handles dict-shaped controlCapabilities mapping."""
+        self.device.set_model_capabilities({"controlCapabilities": {"NanoeX": ["on", "off"]}})
+        self.assertTrue(self.device.supports_nanoe)
+        self.mock_broker.set_nanoe = AsyncMock()
+        await self.device.set_nanoe(True)
+        self.mock_broker.set_nanoe.assert_awaited_with(
+            "miraie/v1/control/dev_living",
+            True
+        )
+
+    def test_dict_capabilities_normalization_across_properties(self):
+        """Test capability properties safely normalize dictionary-shaped controlCapabilities."""
+        caps = {"controlCapabilities": {"BuzzerControl": ["on", "off"]}}
+        self.device.set_model_capabilities(caps)
+        self.assertEqual(self.device.target_temperature_step, 1.0)
+        self.assertFalse(self.device.supports_horizontal_swing)
+        self.assertFalse(self.device.supports_night_display)
+        self.assertFalse(self.device.supports_nanoe)
+        self.assertTrue(self.device.supports_buzzer)
+
+    async def test_send_command_falls_back_when_reply_lacks_command_keys(self):
+        """Test _send_command falls back to MQTT when reply lacks requested command keys."""
+        mock_transport = AsyncMock()
+        mock_transport.register_device = MagicMock()
+        # Reply contains telemetry but lacks 'ps'
+        mock_transport.send_command = AsyncMock(return_value={"actmp": "24", "rssi": -65})
+        self.device.details = AsyncMock(udp_control_key="key", udp_control_iv="iv", mac_address="00:11:22:33:44:55", multicast_ip=None)
+        self.device.attach_udp_transport(mock_transport)
+        self.mock_broker.set_power = AsyncMock()
+
+        await self.device.turn_on()
+        # Should fall back to broker since 'ps' was not in the UDP response
+        self.mock_broker.set_power.assert_awaited_once_with(
+            "miraie/v1/control/dev_living",
+            PowerMode.ON,
+        )
+
+    def test_status_handler_malformed_actmp(self):
+        """Test status_handler safely handles malformed non-string non-float actmp."""
+        raw_payload = {
+            "ps": "off",
+            "actmp": [],
+        }
+        self.device.status_handler(raw_payload)
+        self.assertEqual(self.device.status.power_mode, PowerMode.OFF)
+        self.assertEqual(self.device.status.temperature, 24.0)
+
 
 if __name__ == "__main__":
     unittest.main()

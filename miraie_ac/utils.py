@@ -19,9 +19,17 @@ def toFloat(value: str) -> float | None:
         return None
 
 
-def parse_room_temp(value: str, firmware_version: str = "") -> float | None:
+def parse_room_temp(value: object, firmware_version: str = "") -> float | None:
     """Parse rmtmp, accounting for sub-degree high-resolution format in firmware 3.02+."""
-    if not value:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        if value <= 50.0:
+            return float(value)
+
+    val_str = str(value).strip()
+    if not val_str:
         return None
 
     try:
@@ -31,15 +39,15 @@ def parse_room_temp(value: str, firmware_version: str = "") -> float | None:
     except (ValueError, AttributeError):
         is_packed_firmware = False
 
-    if is_packed_firmware and '.' in value:
+    if is_packed_firmware and '.' in val_str:
         try:
-            prefix_str, temp_str = value.split('.')
+            prefix_str, temp_str = val_str.split('.')
             integer_temp = float(temp_str)
             if integer_temp <= 0:
                 return None
             prefix_byte = int(prefix_str)
             return round(integer_temp + (prefix_byte / 256.0), 2)
         except (ValueError, IndexError):
-            return toFloat(value)
+            return toFloat(val_str)
 
-    return toFloat(value)
+    return toFloat(val_str)

@@ -5,6 +5,7 @@ class DisplayMode(Enum):
     """Enum for Display mode."""
 
     ON = "on"
+    NIGHT = "night"
     OFF = "off"
 
 

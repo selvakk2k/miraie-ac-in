@@ -175,15 +175,25 @@ class MirAIeHub:
         try:
             url = constants.modelCapabilitiesUrl.format(modelNumber=model_number)
             timeout = aiohttp.ClientTimeout(total=5.0)
-            async with self.http.get(url, headers=self.__build_headers__(), timeout=timeout) as response:
+            async with self.http.get(url, headers=self.__build_headers__(), timeout=timeout, raise_for_status=False) as response:
                 if response.status == 200:
-                    return await response.json()
-                LOGGER.warning(
-                    "Failed to fetch model capabilities for %s (HTTP %s)",
-                    model_number,
-                    response.status,
-                )
-                return {}
+                    data = await response.json()
+                    return data.get("data") if isinstance(data, dict) and "data" in data and "controlCapabilities" not in data else data
+                status = response.status
+
+            if status == 404:
+                fallback_url = f"https://app.miraie.in/simplifi/v1/deviceManagement/deviceModels/{model_number}"
+                async with self.http.get(fallback_url, headers=self.__build_headers__(), timeout=timeout, raise_for_status=False) as fb_resp:
+                    if fb_resp.status == 200:
+                        fb_data = await fb_resp.json()
+                        return fb_data.get("data") if isinstance(fb_data, dict) and "data" in fb_data and "controlCapabilities" not in fb_data else fb_data
+
+            LOGGER.warning(
+                "Failed to fetch model capabilities for %s (HTTP %s)",
+                model_number,
+                status,
+            )
+            return {}
         except Exception as err:
             LOGGER.warning("Error fetching model capabilities for %s: %s", model_number, err)
             return {}
@@ -236,6 +246,9 @@ class MirAIeHub:
                     serial_number=dd.get("serialNumber", ""),
                     model_number=dd.get("modelNumber", ""),
                     product_serial_number=dd.get("productSerialNumber", ""),
+                    udp_control_key=dd.get("udpControlKey"),
+                    udp_control_iv=dd.get("udpControlIV") or dd.get("udpControlIv"),
+                    multicast_ip=dd.get("multicastIP"),
                 )
                 device.set_details(details)
             except Exception as e:
