@@ -1,7 +1,7 @@
 """Local UDP transport and protocol for Panasonic MirAIe ACs.
 
 Reverse engineered and ported with canonical attribution to:
-- DTechTerminal (ha-panasonic-miraie-local) for port binding & TLV baseline.
+- DTechTerminal (https://github.com/dtechterminal/ha-panasonic-miraie-local) for port binding & TLV baseline.
 - Panasonic MirAIe Android APK (com.panasonic.in.miraie) for UDPService specs.
 
 Licensed under MIT.
@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import socket
+import time
 from typing import Any, Callable, Coroutine
 
 from cryptography.hazmat.backends import default_backend
@@ -32,7 +33,7 @@ TAG_DEVICE_ID: int = 0
 TAG_COMMAND_CIPHERTEXT: int = 1
 TAG_RESPONSE_CIPHERTEXT: int = 2
 
-# MirAIe Controller Identifier: "ha" (Home Assistant)
+# MirAIe Controller Identifier: "ha" (Home Assistant baseline, customizable per command)
 CONTROLLER_ID: str = "ha"
 
 
@@ -98,6 +99,7 @@ class LocalUdpDeviceProtocol:
         self.ip_address = ip_address
         self.multicast_ip = multicast_ip
         self._dev_id_bytes = device_id.encode("ascii")
+        self.last_seen: float = 0.0
 
     def encode_command(
         self,
@@ -165,11 +167,15 @@ class LocalUdpTransportManager:
         self._devices: dict[str, LocalUdpDeviceProtocol] = {}
         self._callbacks: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, None] | None]] = {}
         self._pending_commands: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._device_locks: dict[str, asyncio.Lock] = {}
         self._pending_discoveries: dict[str, asyncio.Future[str]] = {}
         self._subnet_discovery_cb: Callable[[str, str], None] | None = None
         self._transport: asyncio.DatagramTransport | None = None
         self._lock = asyncio.Lock()
         self._is_running = False
+        self._generation: int = 0
+        self._cmd_seq: int = 0
+        self._seen_device_ips: dict[str, str] = {}
 
     @classmethod
     def get_instance(cls) -> LocalUdpTransportManager:
@@ -182,6 +188,15 @@ class LocalUdpTransportManager:
     def is_running(self) -> bool:
         """Return True if the listener socket is open."""
         return self._is_running
+
+    def get_seen_ip(self, device_id: str) -> str | None:
+        """Return the most recently observed IP address for a device_id, if any."""
+        return self._seen_device_ips.get(device_id)
+
+    @property
+    def seen_device_ips(self) -> dict[str, str]:
+        """Return copy of all seen device IDs and their IP addresses."""
+        return dict(self._seen_device_ips)
 
     async def start(self) -> None:
         """Start the central UDP receiver socket on port 5002."""
@@ -212,6 +227,7 @@ class LocalUdpTransportManager:
             )
             self._transport = transport
             self._is_running = True
+            self._generation += 1
             _LOGGER.info("MirAIe Local UDP Transport Manager started on port %s", RECEIVE_PORT)
 
     async def stop(self) -> None:
@@ -225,6 +241,7 @@ class LocalUdpTransportManager:
 
             self._transport = None
             self._is_running = False
+            self._generation += 1
 
             # Cancel any pending command futures
             for future in self._pending_commands.values():
@@ -251,8 +268,12 @@ class LocalUdpTransportManager:
         callback: Callable[[dict[str, Any]], Coroutine[Any, Any, None] | None] | None = None,
     ) -> LocalUdpDeviceProtocol:
         """Register a device with the transport manager."""
+        if not ip_address and device_id in self._seen_device_ips:
+            ip_address = self._seen_device_ips[device_id]
         protocol = LocalUdpDeviceProtocol(device_id, mac, key, iv, ip_address, multicast_ip)
         self._devices[device_id] = protocol
+        if ip_address:
+            self._seen_device_ips[device_id] = ip_address
         if callback:
             self._callbacks[device_id] = callback
         _LOGGER.debug("Registered AC device %s (MAC: %s, IP: %s)", device_id, mac, ip_address)
@@ -266,6 +287,7 @@ class LocalUdpTransportManager:
 
     def set_device_ip(self, device_id: str, ip_address: str) -> None:
         """Update the known IP address for a registered device."""
+        self._seen_device_ips[device_id] = ip_address
         if device_id in self._devices:
             self._devices[device_id].ip_address = ip_address
             _LOGGER.debug("Updated IP for device %s -> %s", device_id, ip_address)
@@ -326,43 +348,51 @@ class LocalUdpTransportManager:
         command_dict: dict[str, Any],
         sid: str | None = None,
         timeout: float = 3.5,
+        controller: str | None = None,
     ) -> dict[str, Any]:
         """Send an encrypted command to an AC and await its matching ACK on port 5002."""
         if not self._is_running:
             await self.start()
 
-        protocol = self._devices.get(device_id)
-        if not protocol:
-            raise ValueError(f"Device {device_id} is not registered with UDP transport")
+        gen = self._generation
+        lock = self._device_locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            if not self._is_running or self._generation != gen:
+                raise ConnectionError(f"Transport stopped while command for {device_id} was queued")
 
-        if not protocol.ip_address:
-            # Attempt opportunistic discovery first
-            resolved_ip = await self.discover(protocol.mac, timeout=2.0)
-            if resolved_ip:
-                protocol.ip_address = resolved_ip
-            else:
-                raise ConnectionError(f"No IP address available for device {device_id}")
+            protocol = self._devices.get(device_id)
+            if not protocol:
+                raise ValueError(f"Device {device_id} is not registered with UDP transport")
 
-        if sid is None:
-            # Generate unique sequence identifier
-            sid = f"ha_{asyncio.get_running_loop().time():.3f}".replace(".", "")
+            if not protocol.ip_address:
+                # Attempt opportunistic discovery first
+                resolved_ip = await self.discover(protocol.mac, timeout=2.0)
+                if resolved_ip:
+                    protocol.ip_address = resolved_ip
+                    self._seen_device_ips[device_id] = resolved_ip
+                else:
+                    raise ConnectionError(f"No IP address available for device {device_id}")
 
-        wire_bytes = protocol.encode_command(command_dict, sid=sid)
+            self._cmd_seq += 1
+            assigned_sid = sid if sid is not None else f"ha_{self._cmd_seq}"
 
-        loop = asyncio.get_running_loop()
-        cmd_key = f"{device_id}:{sid}"
-        future: asyncio.Future[dict[str, Any]] = loop.create_future()
-        self._pending_commands[cmd_key] = future
+            wire_bytes = protocol.encode_command(command_dict, sid=assigned_sid, controller=controller or CONTROLLER_ID)
 
-        try:
-            if self._transport:
-                self._transport.sendto(wire_bytes, (protocol.ip_address, DISCOVERY_PORT))
-                _LOGGER.debug("Sent UDP command to %s:%s (sid=%s)", protocol.ip_address, DISCOVERY_PORT, sid)
+            loop = asyncio.get_running_loop()
+            cmd_key = f"{device_id}:{assigned_sid}"
+            future: asyncio.Future[dict[str, Any]] = loop.create_future()
+            self._pending_commands[cmd_key] = future
 
-            response = await asyncio.wait_for(future, timeout=timeout)
-            return response
-        finally:
-            self._pending_commands.pop(cmd_key, None)
+            try:
+                if self._transport:
+                    self._transport.sendto(wire_bytes, (protocol.ip_address, DISCOVERY_PORT))
+                    _LOGGER.debug("Sent UDP command to %s:%s (sid=%s)", protocol.ip_address, DISCOVERY_PORT, assigned_sid)
+
+                response = await asyncio.wait_for(future, timeout=timeout)
+                return response
+            finally:
+                if self._pending_commands.get(cmd_key) is future:
+                    self._pending_commands.pop(cmd_key, None)
 
     def handle_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
         """Handle raw incoming UDP packets on port 5002."""
@@ -378,6 +408,7 @@ class LocalUdpTransportManager:
             for dev in self._devices.values():
                 if dev.mac == mac_part:
                     dev.ip_address = sender_ip
+                    self._seen_device_ips[dev.device_id] = sender_ip
 
             # Fulfill pending discovery future
             if mac_part in self._pending_discoveries and not self._pending_discoveries[mac_part].done():
@@ -404,6 +435,8 @@ class LocalUdpTransportManager:
                 _LOGGER.debug("Received packet for unregistered device %s from %s", dev_id_str, sender_ip)
                 return
 
+            self._seen_device_ips[dev_id_str] = sender_ip
+
             # Keep device IP updated
             protocol.ip_address = sender_ip
 
@@ -411,11 +444,16 @@ class LocalUdpTransportManager:
             status = protocol.decode_packet(data)
             _LOGGER.debug("Decrypted UDP packet from %s: %s", dev_id_str, status)
 
-            # Fulfill pending command future matching sid
-            sid = status.get("sid")
-            cmd_key = f"{dev_id_str}:{sid}"
-            if cmd_key in self._pending_commands and not self._pending_commands[cmd_key].done():
-                self._pending_commands[cmd_key].set_result(status)
+            # Record last UDP packet reception timestamp for reachability tracking
+            protocol.last_seen = time.time()
+
+            # Fulfill command matching response sid
+            rsp_sid = status.get("sid")
+            if rsp_sid:
+                exact_key = f"{dev_id_str}:{rsp_sid}"
+                fut = self._pending_commands.pop(exact_key, None)
+                if fut and not fut.done():
+                    fut.set_result(status)
 
             # Dispatch status update to registered device callback
             callback = self._callbacks.get(dev_id_str)

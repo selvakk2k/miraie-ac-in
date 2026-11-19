@@ -141,6 +141,7 @@ class Device:
         self.model_capabilities: dict = {}
         self.udp_transport = None
         self.use_local_udp: bool = False
+        self.controller_id: str = "ha"
         self._last_status_ts: int = 0
 
         self._callbacks = set()
@@ -190,7 +191,10 @@ class Device:
         cur = getattr(self, "status", None)
         firmware_version = getattr(getattr(self, "details", None), "firmware_version", "")
 
-        is_online = cur.is_online if cur else True
+        if "onlineStatus" in status:
+            is_online = status["onlineStatus"] == "true"
+        else:
+            is_online = True
 
         if "actmp" in status:
             try:
@@ -452,7 +456,7 @@ class Device:
                 callback=self.status_handler,
             )
 
-    async def send_udp_command(self, cmd_dict: dict) -> dict:
+    async def send_udp_command(self, cmd_dict: dict, controller: str | None = None) -> dict:
         """Send command strictly via Local UDP transport and update status on ACK."""
         if not self.udp_transport:
             raise RuntimeError(f"No UDP transport attached to device {self.id}")
@@ -470,10 +474,16 @@ class Device:
                     multicast_ip=getattr(details, "multicast_ip", None),
                     callback=self.status_handler,
                 )
-            res = await self.udp_transport.send_command(self.id, cmd_dict)
+            kwargs = {}
+            ctrl = controller if controller is not None else getattr(self, "controller_id", None)
+            if ctrl is not None and ctrl != "ha":
+                kwargs["controller"] = ctrl
+            elif controller is not None:
+                kwargs["controller"] = controller
+            res = await self.udp_transport.send_command(self.id, cmd_dict, **kwargs)
         except Exception as err:
             raise RuntimeError(f"Local UDP command failed for device {self.id}: {err}") from err
-        if res and isinstance(res, dict) and any(k in res for k in cmd_dict):
+        if res and isinstance(res, dict) and (not cmd_dict or any(k in res for k in cmd_dict)):
             return res
         raise RuntimeError(f"Local UDP command failed or rejected by device {self.id}: {res}")
 
