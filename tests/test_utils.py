@@ -23,6 +23,24 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(parse_room_temp("24.00", "3.02"), 24.0)
         self.assertEqual(parse_room_temp("24.50", "3.02"), 24.5)
 
+    def test_parse_room_temp_dual_stream_simulation(self):
+        # 1. Unpacked AC Stream Simulation (10.0C to 45.0C in tenths and double-digit decimals)
+        for t_int in range(10, 46):
+            for tenths in range(10):
+                s = f"{t_int}.{tenths}"
+                self.assertEqual(parse_room_temp(s, "3.02"), float(s))
+            for frac in ("00", "50"):
+                s = f"{t_int}.{frac}"
+                self.assertEqual(parse_room_temp(s, "3.02"), float(s))
+
+        # 2. Packed AC Stream Simulation (16C to 35C across all 256 prefix bytes)
+        for temp in range(16, 36):
+            for prefix in range(256):
+                prefix_str = f"{prefix:02d}" if prefix < 100 else f"{prefix}"
+                s = f"{prefix_str}.{temp}"
+                expected = round(temp + (prefix / 256.0), 2)
+                self.assertEqual(parse_room_temp(s, "3.02"), expected)
+
     def test_parse_room_temp_edge_cases(self):
         # Zero/uninitialized temperature returns None
         self.assertIsNone(parse_room_temp("00.0", "3.02"))
