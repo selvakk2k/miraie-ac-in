@@ -28,10 +28,12 @@ A Python client library and CLI tool for controlling Panasonic MirAIe smart air 
 
 ## Features
 
-* **Local UDP Control**: Direct local network control on UDP ports 5001 and 5002 using AES-256-CBC encryption, providing fast command execution (under 30 ms) without requiring internet access.
+* **Local UDP Control & Raw Wire Interception**: Intercepts and decrypts raw binary TLV telemetry frames (AES-256-CBC) broadcasted on LAN port 5002 directly from the physical AC hardware, providing sub-20 ms local command execution and telemetry without internet access.
+* **Cloud MQTT State Subscription**: Connects as an authenticated client subscribing to live device status topics (`.../status`, `.../connectionStatus`) on Panasonic's AWS IoT Core broker for instant state updates.
 * **Automatic Cloud Fallback**: Automatically falls back to cloud MQTT if a local UDP command is dropped or the device is unreachable on LAN.
 * **Dynamic Hardware Capabilities**: Automatically queries official model capabilities (0.5°C vs 1.0°C temperature steps, motorized horizontal swing, night display mode, convertible capacity percentages, Nanoe air purification, and buzzer controls).
 * **Firmware 3.02+ Temperature Support**: Decodes high-resolution ambient room temperature reported by newer firmware versions, while retaining standard decoding for older firmware.
+* **Server-Side Energy Statistics**: Fetches daily and monthly energy consumption (kWh) computed server-side by Panasonic via the HTTP REST API. (Note: AC hardware lacks an onboard power metering IC, so energy is not streamed over MQTT or UDP).
 * **Convertible Capacity Modes**: Supports 4-in-1, 7-in-1, and 8-in-1 compressor profiles (40% to 110%).
 * **Telemetry & Diagnostics**: Parses power state, fan speed, swing modes, Nanoe status, filter cleaning alerts, Wi-Fi RSSI signal strength, error codes, and control sources.
 * **Resource Lifecycle Management**: Provides an async `close()` method to clean up network sockets, background tasks, and HTTP client sessions.
@@ -125,16 +127,16 @@ miraie-ac dump-keys --user +919999999999
 miraie-ac discover
 ```
 
-### Local Network Diagnostics
+### Telemetry Streaming & Diagnostics
 
 ```bash
 # Ping an AC on UDP port 5001 and measure round-trip latency
 miraie-ac ping --ip 192.168.1.100 --device-id 0123456789ab --key "$MIRAIE_KEY" --iv "$MIRAIE_IV"
 
-# Stream live telemetry from the local UDP socket (port 5002)
+# Intercept and decrypt raw telemetry frames directly from the local UDP socket (port 5002)
 miraie-ac listen --transport udp --device-id 0123456789ab --key "$MIRAIE_KEY" --iv "$MIRAIE_IV"
 
-# Stream live telemetry from Cloud MQTT
+# Stream live status updates subscribed from Cloud MQTT
 miraie-ac listen --transport cloud --user +919999999999 --device-id 0123456789ab
 ```
 
