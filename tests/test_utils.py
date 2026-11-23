@@ -13,6 +13,16 @@ class TestUtils(unittest.TestCase):
         # Numeric float carrying packed bits (> 50.0) is also decoded properly
         self.assertEqual(parse_room_temp(128.28, "3.02"), 28.50)
 
+    def test_parse_room_temp_firmware_3_02_normal_decimal(self):
+        # Firmware 3.02 normal decimal format (issue #1)
+        self.assertEqual(parse_room_temp("23.0", "3.02"), 23.0)
+        self.assertEqual(parse_room_temp("24.5", "3.02"), 24.5)
+        self.assertEqual(parse_room_temp("23.5", "3.02"), 23.5)
+        self.assertEqual(parse_room_temp("24.0", "3.02"), 24.0)
+        self.assertEqual(parse_room_temp("25.2", "3.02"), 25.2)
+        self.assertEqual(parse_room_temp("24.00", "3.02"), 24.0)
+        self.assertEqual(parse_room_temp("24.50", "3.02"), 24.5)
+
     def test_parse_room_temp_edge_cases(self):
         # Zero/uninitialized temperature returns None
         self.assertIsNone(parse_room_temp("00.0", "3.02"))

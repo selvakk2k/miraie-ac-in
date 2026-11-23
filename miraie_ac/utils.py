@@ -40,14 +40,35 @@ def parse_room_temp(value: object, firmware_version: str = "") -> float | None:
         is_packed_firmware = False
 
     if is_packed_firmware and '.' in val_str:
-        try:
-            prefix_str, temp_str = val_str.split('.')
-            integer_temp = float(temp_str)
-            if integer_temp <= 0:
-                return None
-            prefix_byte = int(prefix_str)
-            return round(integer_temp + (prefix_byte / 256.0), 2)
-        except (ValueError, IndexError):
-            return toFloat(val_str)
+        parts = val_str.split('.')
+        if len(parts) == 2:
+            prefix_str, suffix_str = parts[0], parts[1]
+            try:
+                prefix_val = int(prefix_str)
+                suffix_val = int(suffix_str)
+
+                # Check for zero/uninitialized temperature like "00.0"
+                if prefix_val == 0 and suffix_val == 0:
+                    return None
+
+                # Normal decimal temperature (e.g. "23.0", "24.5", "23.5", "24.0", "25.2"):
+                # - Prefix is in ambient room temp range (10 <= prefix <= 50) and not zero-padded (e.g. not "00", "01")
+                # - Suffix is either 1 digit (e.g. "0", "5", "2") or standard decimal "00"/"50", or not an ambient temp
+                is_normal_ambient = (
+                    10 <= prefix_val <= 50
+                    and not (len(prefix_str) > 1 and prefix_str.startswith('0'))
+                    and (len(suffix_str) == 1 or suffix_str in ("00", "50") or not (10 <= suffix_val <= 50))
+                )
+
+                if is_normal_ambient:
+                    return toFloat(val_str)
+
+                # Packed high-resolution format (e.g. "128.28", "193.29", "61.26", "01.28", "00.24"):
+                # Suffix is the integer temperature (10 <= suffix <= 50).
+                # Prefix is the fractional byte (prefix / 256.0).
+                if 10 <= suffix_val <= 50:
+                    return round(float(suffix_val) + (prefix_val / 256.0), 2)
+            except (ValueError, IndexError):
+                return toFloat(val_str)
 
     return toFloat(val_str)

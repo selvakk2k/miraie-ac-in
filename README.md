@@ -82,16 +82,16 @@ miraie-ac dump-keys --user +919999999999
 miraie-ac discover
 
 # Ping an AC on UDP port 5001 and measure round-trip latency
-miraie-ac ping --ip 192.168.0.167 --device-id 8c53afca6252 --key "$MIRAIE_KEY" --iv "$MIRAIE_IV"
+miraie-ac ping --ip 192.168.1.100 --device-id 0123456789ab --key "$MIRAIE_KEY" --iv "$MIRAIE_IV"
 
 # Send commands via Local UDP
-miraie-ac control --transport udp --ip 192.168.0.167 --device-id 8c53afca6252 --key "$MIRAIE_KEY" --iv "$MIRAIE_IV" --power on --temp 24 --mode cool
+miraie-ac control --transport udp --ip 192.168.1.100 --device-id 0123456789ab --key "$MIRAIE_KEY" --iv "$MIRAIE_IV" --power on --temp 24 --mode cool
 
 # Send commands via Cloud MQTT
-miraie-ac control --transport cloud --user +919999999999 --device-id 8c53afca6252 --power off
+miraie-ac control --transport cloud --user +919999999999 --device-id 0123456789ab --power off
 
 # Stream live telemetry from the local UDP socket (port 5002)
-miraie-ac listen --transport udp --device-id 8c53afca6252 --key "$MIRAIE_KEY" --iv "$MIRAIE_IV"
+miraie-ac listen --transport udp --device-id 0123456789ab --key "$MIRAIE_KEY" --iv "$MIRAIE_IV"
 ```
 
 ---
