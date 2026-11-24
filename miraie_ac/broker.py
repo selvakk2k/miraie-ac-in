@@ -18,6 +18,7 @@ class MirAIeBroker:
 
     def __init__(self) -> None:
         self.status_callbacks: dict[str, callable] = {}
+        self.raw_message_callbacks: list[callable] = []
         self.connected = asyncio.Event()
 
     def register_device_callback(self, topic: str, callback):
@@ -26,8 +27,24 @@ class MirAIeBroker:
     def remove_device_callback(self, topic: str):
         self.status_callbacks.pop(topic, None)
 
+    def register_raw_callback(self, callback: callable):
+        """Register a callback that receives (topic: str, payload: any) for all received MQTT messages."""
+        if callback not in self.raw_message_callbacks:
+            self.raw_message_callbacks.append(callback)
+
+    def add_topic(self, topic: str):
+        if not hasattr(self, "commandTopics") or self.commandTopics is None:
+            self.commandTopics = []
+        if topic not in self.commandTopics:
+            self.commandTopics.append(topic)
+
     def set_topics(self, topics: list[str]):
-        self.commandTopics = topics
+        self.commandTopics = list(topics)
+
+    async def subscribe(self, topic: str):
+        self.add_topic(topic)
+        if self.connected.is_set() and getattr(self, "client", None):
+            await self.client.subscribe(topic)
 
     async def on_connect(self):
         for topic in self.commandTopics:
@@ -35,7 +52,18 @@ class MirAIeBroker:
             await self.client.subscribe(topic)
 
     def on_message(self, message: Message):
-        parsed = json.loads(message.payload.decode("utf-8"))
+        try:
+            parsed = json.loads(message.payload.decode("utf-8"))
+        except Exception:
+            parsed = message.payload.decode("utf-8", errors="replace")
+
+        # Dispatch to raw/wildcard message listeners
+        for raw_cb in self.raw_message_callbacks:
+            try:
+                raw_cb(message.topic.value, parsed)
+            except Exception as error:
+                LOGGER.error(f"Error handling raw message callback: {error}", exc_info=True)
+
         func = self.status_callbacks.get(message.topic.value)
         if func:
             try:

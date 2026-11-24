@@ -72,3 +72,63 @@ def parse_room_temp(value: object, firmware_version: str = "") -> float | None:
                 return toFloat(val_str)
 
     return toFloat(val_str)
+
+
+def decode_diagnostic_frame(b64_payload: str) -> dict[str, Any]:
+    """Decode binary Base64 TLV diagnostic frame from the .../diag MQTT topic.
+
+    Extracts internal microcontroller registers:
+    - 0xB1: Compressor frequency in Hz
+    - 0xB2: Indoor evaporator coil temperature in °C
+    - 0xB3: Outdoor condenser ambient temperature in °C
+    - 0xB4: Indoor fan speed stage
+    - 0xF2: Diagnostic error code (e.g. 'H00' = normal)
+    """
+    import base64
+
+    try:
+        raw = base64.b64decode(b64_payload)
+    except Exception:
+        return {}
+
+    result: dict[str, Any] = {}
+    i = 0
+    raw_len = len(raw)
+
+    while i < raw_len:
+        tag = raw[i]
+        # 1-byte value tags
+        if tag in (0xB1, 0xB2, 0xB3, 0xB4, 0xB7, 0xC1, 0xC2, 0xC3, 0xC4, 0xC6, 0xCA, 0xE1, 0xE2, 0xE3, 0xF1):
+            if i + 1 < raw_len:
+                val = raw[i + 1]
+                if tag == 0xB1:
+                    result["compressor_frequency_hz"] = val
+                elif tag == 0xB2:
+                    result["evaporator_coil_temp_c"] = val
+                elif tag == 0xB3:
+                    result["outdoor_condenser_temp_c"] = val
+                elif tag == 0xB4:
+                    result["fan_stage"] = val
+                result[f"0x{tag:02X}"] = val
+            i += 2
+        # 2-byte signed value tags
+        elif tag in (0xB5, 0xB6, 0xC5, 0xC7, 0xC8, 0xC9, 0xF5, 0xF6):
+            if i + 2 < raw_len:
+                val = int.from_bytes(raw[i + 1 : i + 3], "big", signed=True)
+                result[f"0x{tag:02X}"] = val
+            i += 3
+        # Error code string (4 bytes, e.g. b'\xf2H00')
+        elif tag == 0xF2:
+            if i + 3 < raw_len:
+                code_str = raw[i + 1 : i + 4].decode("ascii", errors="ignore").strip()
+                result["error_code"] = code_str
+            i += 4
+        # 4-byte value tags
+        elif tag == 0xF3:
+            if i + 4 < raw_len:
+                result["0xF3"] = raw[i + 1 : i + 5].hex()
+            i += 5
+        else:
+            i += 1
+
+    return result

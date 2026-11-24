@@ -23,6 +23,7 @@ from miraie_ac.enums import (
 )
 from miraie_ac.hub import MirAIeHub
 from miraie_ac.transport.udp import LocalUdpTransportManager
+from miraie_ac.utils import decode_diagnostic_frame
 
 LOGGER = logging.getLogger("miraie_ac.cli")
 
@@ -322,6 +323,17 @@ async def cmd_control(args: argparse.Namespace) -> int:
 
 async def cmd_listen(args: argparse.Namespace) -> int:
     transport_type = args.transport.lower()
+    log_fp = None
+    if getattr(args, "log_file", None):
+        log_fp = open(args.log_file, "a", encoding="utf-8")
+        print(f"Logging telemetry dataset to {args.log_file}", file=sys.stderr)
+
+    def _log_record(data: dict):
+        line = json.dumps(data)
+        print(line, flush=True)
+        if log_fp:
+            log_fp.write(line + "\n")
+            log_fp.flush()
 
     if transport_type == "udp":
         device_id = args.device_id or os.getenv("MIRAIE_DEVICE_ID")
@@ -329,6 +341,8 @@ async def cmd_listen(args: argparse.Namespace) -> int:
         iv = args.iv or os.getenv("MIRAIE_IV")
 
         if not all([device_id, key, iv]):
+            if log_fp:
+                log_fp.close()
             print("Error: UDP listener requires --device-id, --key, and --iv to decrypt telemetry frames.", file=sys.stderr)
             return 1
 
@@ -337,7 +351,7 @@ async def cmd_listen(args: argparse.Namespace) -> int:
         print(f"Listening for incoming UDP frames for {device_id} on 0.0.0.0:5002 (Ctrl+C to stop)...", file=sys.stderr)
 
         def _packet_listener(payload: dict):
-            print(json.dumps({"transport": "udp", "timestamp": time.time(), "payload": payload}), flush=True)
+            _log_record({"transport": "udp", "timestamp": time.time(), "payload": payload})
 
         try:
             transport.register_device(
@@ -353,6 +367,8 @@ async def cmd_listen(args: argparse.Namespace) -> int:
             print("\nStopping UDP listener.", file=sys.stderr)
         finally:
             await transport.stop()
+            if log_fp:
+                log_fp.close()
         return 0
 
     elif transport_type == "cloud":
@@ -363,21 +379,51 @@ async def cmd_listen(args: argparse.Namespace) -> int:
         broker = MirAIeBroker()
         try:
             await hub.init(username, password, broker)
-            print("Listening to MirAIe Cloud MQTT topics (Ctrl+C to stop)...", file=sys.stderr)
 
-            for dev in getattr(getattr(hub, "home", None), "devices", []):
-                def _make_cb(device):
-                    return lambda: print(json.dumps({
-                        "transport": "cloud",
-                        "deviceId": device.id,
-                        "friendlyName": device.friendly_name,
+            if getattr(args, "wildcard", False):
+                print("Wildcard topic inspection enabled (#). Listening to all device topic branches...", file=sys.stderr)
+
+                def _wildcard_cb(topic: str, payload: any):
+                    record = {
+                        "transport": "cloud_mqtt",
+                        "topic": topic,
                         "timestamp": time.time(),
-                        "power": getattr(device.status, "power_mode", None).value if getattr(device.status, "power_mode", None) else None,
-                        "temp": getattr(device.status, "temperature", None),
-                        "roomTemp": getattr(device.status, "room_temperature", None),
-                        "mode": getattr(device.status, "hvac_mode", None).value if getattr(device.status, "hvac_mode", None) else None,
-                    }), flush=True)
-                dev.register_callback(_make_cb(dev))
+                        "payload": payload,
+                    }
+                    if topic.endswith("/diag") and isinstance(payload, dict):
+                        di_a = payload.get("di_a", [])
+                        if di_a and isinstance(di_a, list):
+                            decoded_frames = [decode_diagnostic_frame(f) for f in di_a if isinstance(f, str)]
+                            record["decoded_diag"] = decoded_frames
+                    _log_record(record)
+
+                broker.register_raw_callback(_wildcard_cb)
+
+                target_devices = getattr(getattr(hub, "home", None), "devices", [])
+                if args.device_id:
+                    target_devices = [d for d in target_devices if d.id == args.device_id]
+
+                for dev in target_devices:
+                    base = dev.control_topic.rsplit("/", 1)[0]
+                    wildcard_topic = f"{base}/#"
+                    print(f"Subscribing to wildcard: {wildcard_topic}", file=sys.stderr)
+                    await broker.subscribe(wildcard_topic)
+            else:
+                print("Listening to MirAIe Cloud MQTT topics (Ctrl+C to stop)...", file=sys.stderr)
+
+                for dev in getattr(getattr(hub, "home", None), "devices", []):
+                    def _make_cb(device):
+                        return lambda: _log_record({
+                            "transport": "cloud",
+                            "deviceId": device.id,
+                            "friendlyName": device.friendly_name,
+                            "timestamp": time.time(),
+                            "power": getattr(device.status, "power_mode", None).value if getattr(device.status, "power_mode", None) else None,
+                            "temp": getattr(device.status, "temperature", None),
+                            "roomTemp": getattr(device.status, "room_temperature", None),
+                            "mode": getattr(device.status, "hvac_mode", None).value if getattr(device.status, "hvac_mode", None) else None,
+                        })
+                    dev.register_callback(_make_cb(dev))
 
             while True:
                 await asyncio.sleep(1)
@@ -385,8 +431,12 @@ async def cmd_listen(args: argparse.Namespace) -> int:
             print("\nStopping MQTT listener.", file=sys.stderr)
         finally:
             await hub.close()
+            if log_fp:
+                log_fp.close()
         return 0
     else:
+        if log_fp:
+            log_fp.close()
         print(f"Error: Unsupported transport '{transport_type}'. Use 'udp' or 'cloud'.", file=sys.stderr)
         return 1
 
@@ -455,11 +505,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--iv", help="UDP AES IV")
     p_list.add_argument("--user", help="Cloud user")
     p_list.add_argument("--password", help="Cloud password")
+    p_list.add_argument("--wildcard", action="store_true", help="Subscribe to MQTT wildcard topics (<base>/#) to capture all messages")
+    p_list.add_argument("--log-file", help="Path to write incoming telemetry dataset (JSONL format)")
 
     return parser
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        except AttributeError:
+            pass
+
     parser = build_parser()
     args = parser.parse_args()
 
