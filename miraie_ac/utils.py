@@ -78,10 +78,12 @@ def decode_diagnostic_frame(b64_payload: str) -> dict[str, Any]:
     """Decode binary Base64 TLV diagnostic frame from the .../diag MQTT topic.
 
     Extracts internal microcontroller registers:
-    - 0xB1: Compressor frequency in Hz
     - 0xB2: Indoor evaporator coil temperature in °C
-    - 0xB3: Outdoor condenser ambient temperature in °C
     - 0xB4: Indoor fan speed stage
+    - 0xC2: Compressor frequency in Hz
+    - 0xC3: Outdoor condenser temperature in °C
+    - 0xC5: Compressor / AC current in A (raw centi-Amps / 100)
+    - 0xC9: AC mains voltage in V
     - 0xF2: Diagnostic error code (e.g. 'H00' = normal)
     """
     import base64
@@ -101,20 +103,24 @@ def decode_diagnostic_frame(b64_payload: str) -> dict[str, Any]:
         if tag in (0xB1, 0xB2, 0xB3, 0xB4, 0xB7, 0xC1, 0xC2, 0xC3, 0xC4, 0xC6, 0xCA, 0xE1, 0xE2, 0xE3, 0xF1):
             if i + 1 < raw_len:
                 val = raw[i + 1]
-                if tag == 0xB1:
-                    result["compressor_frequency_hz"] = val
-                elif tag == 0xB2:
+                if tag == 0xB2:
                     result["evaporator_coil_temp_c"] = val
-                elif tag == 0xB3:
-                    result["outdoor_condenser_temp_c"] = val
                 elif tag == 0xB4:
                     result["fan_stage"] = val
+                elif tag == 0xC2:
+                    result["compressor_frequency_hz"] = val
+                elif tag == 0xC3:
+                    result["outdoor_condenser_temp_c"] = val
                 result[f"0x{tag:02X}"] = val
             i += 2
         # 2-byte signed value tags
         elif tag in (0xB5, 0xB6, 0xC5, 0xC7, 0xC8, 0xC9, 0xF5, 0xF6):
             if i + 2 < raw_len:
                 val = int.from_bytes(raw[i + 1 : i + 3], "big", signed=True)
+                if tag == 0xC5:
+                    result["current_a"] = round(val / 100.0, 2)
+                elif tag == 0xC9:
+                    result["voltage_v"] = val
                 result[f"0x{tag:02X}"] = val
             i += 3
         # Error code string (4 bytes, e.g. b'\xf2H00')

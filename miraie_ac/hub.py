@@ -102,13 +102,11 @@ class MirAIeHub:
         return self._broker
 
     def get_device_topics(self):
-        device_topics = list(
-            map(
-                lambda device: [device.status_topic, device.connection_status_topic],
-                self.home.devices,
-            )
-        )
-        miraie_topics = [topic for topics in device_topics for topic in topics]
+        miraie_topics = []
+        for device in self.home.devices:
+            miraie_topics.extend([device.status_topic, device.connection_status_topic])
+            if getattr(device, "diag_topic", ""):
+                miraie_topics.append(device.diag_topic)
         return miraie_topics
 
     async def get_token(self):

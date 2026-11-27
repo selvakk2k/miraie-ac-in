@@ -39,6 +39,25 @@ class ACInverterProfile:
                 "auto": 20.0,
             }
 
+    @classmethod
+    def from_model(cls, model_code: str) -> "ACInverterProfile":
+        """Build an ACInverterProfile from panasonic-ac-models BEE data if available."""
+        if not model_code:
+            return cls()
+        try:
+            from panasonic_ac_models import get_bee_profile
+
+            bee = get_bee_profile(model_code)
+            return cls(
+                rated_cooling_w=float(bee.get("rated_cooling_w", 5100.0)),
+                iseer=float(bee.get("iseer", 5.80)),
+                rated_power_w=float(bee.get("rated_power_w", 1480.0)),
+                half_power_w=float(bee.get("half_power_w", 480.0)),
+                min_power_w=float(bee.get("min_power_w", 290.0)),
+            )
+        except Exception:
+            return cls()
+
 
 class InverterPowerEstimator:
     """Estimates instantaneous power (W) and integrates cumulative energy (kWh)."""
@@ -119,25 +138,20 @@ class InverterPowerEstimator:
         comp_max_w = self.profile.rated_power_w * converti_factor
         comp_min_w = self.profile.min_power_w
 
-        # --- MODEL A: Physical Compressor Frequency available from .../diag (0xB1) ---
-        if compressor_hz is not None:
-            if compressor_hz <= 0:
-                comp_power = 0.0
-            else:
-                # Rated frequency is ~90-100Hz at full load, min floor is ~20Hz
-                # Linear electrical mapping with outdoor temperature thermodynamic penalty
-                hz_ratio = min(1.0, max(0.0, (compressor_hz - 15.0) / 75.0))
-                base_comp_w = comp_min_w + (comp_max_w - comp_min_w) * hz_ratio
-                
-                # Outdoor condenser temperature coefficient:
-                # Laboratory standard is 35°C. For every 1°C below 35°C, head pressure drops ~1.2%
-                if outdoor_temp_c is not None:
-                    outdoor_factor = 1.0 + (outdoor_temp_c - 35.0) * 0.012
-                    base_comp_w *= max(0.7, min(1.25, outdoor_factor))
-                
-                comp_power = base_comp_w
+        # --- MODEL A: Physical Compressor Frequency from .../diag (0xC2) ---
+        # Only use Model A when compressor_hz > 0; if 0/None while AC is ON
+        # (stale from OFF before next /diag batch arrives), fall back to Model B.
+        if compressor_hz is not None and compressor_hz > 0:
+            # Calibrated inverter affinity curve (20-100 Hz; ~450-480W at 49 Hz)
+            hz_ratio = min(1.0, max(0.0, (compressor_hz - 20.0) / 80.0))
+            comp_floor = comp_min_w * 0.6
+            base_comp_w = comp_floor + (comp_max_w - comp_floor) * (hz_ratio ** 1.8)
 
-            total_power = self.profile.standby_power_w + fan_power + comp_power
+            if outdoor_temp_c is not None and outdoor_temp_c > 0:
+                outdoor_factor = 1.0 + (outdoor_temp_c - 35.0) * 0.012
+                base_comp_w *= max(0.7, min(1.25, outdoor_factor))
+
+            total_power = self.profile.standby_power_w + fan_power + base_comp_w
             return round(total_power, 1)
 
         # --- MODEL B: Thermodynamic Delta Inverter Model (Local UDP / Offline) ---
@@ -179,6 +193,8 @@ class InverterPowerEstimator:
         timestamp: Optional[float] = None,
         external_room_temp: Optional[float] = None,
         firmware_version: str = "3.02",
+        compressor_hz: Optional[float] = None,
+        outdoor_temp_c: Optional[float] = None,
     ) -> float:
         """Calculate power and integrate energy across time elapsed since last call.
 
@@ -186,6 +202,8 @@ class InverterPowerEstimator:
         :param timestamp: Unix timestamp of the telemetry event.
         :param external_room_temp: Optional external sensor temperature.
         :param firmware_version: AC firmware version.
+        :param compressor_hz: Optional hardware compressor frequency in Hz from .../diag.
+        :param outdoor_temp_c: Optional outdoor condenser temperature in °C from .../diag.
         :return: Instantaneous power in Watts.
         """
         current_time = timestamp if timestamp is not None else time.time()
@@ -193,6 +211,8 @@ class InverterPowerEstimator:
             payload,
             external_room_temp=external_room_temp,
             firmware_version=firmware_version,
+            compressor_hz=compressor_hz,
+            outdoor_temp_c=outdoor_temp_c,
         )
 
         if self._last_timestamp is not None and current_time > self._last_timestamp:

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 from .broker import MirAIeBroker
+from .energy import ACInverterProfile, InverterPowerEstimator
 from .enums import PowerMode, FanMode, SwingMode, DisplayMode, HVACMode, PresetMode, ConvertiMode
-from .utils import toFloat, parse_room_temp
+from .utils import toFloat, parse_room_temp, decode_diagnostic_frame
 from .logger import LOGGER
 
 
@@ -28,6 +29,15 @@ class DeviceStatus:
         buzzer: bool = False,
         error_code: str = "",
         warning_code: str = "",
+        compressor_frequency_hz: Optional[int] = None,
+        evaporator_coil_temp_c: Optional[int] = None,
+        outdoor_condenser_temp_c: Optional[int] = None,
+        fan_stage: Optional[int] = None,
+        voltage_v: Optional[int] = None,
+        current_a: Optional[float] = None,
+        diag_error_code: str = "",
+        estimated_power_w: Optional[float] = None,
+        estimated_energy_kwh: float = 0.0,
     ):
         self.is_online = is_online
         self.temperature = temperature
@@ -47,6 +57,15 @@ class DeviceStatus:
         self.warning_code = warning_code
         self.wifi_signal = wifi_signal
         self.control_source = control_source
+        self.compressor_frequency_hz = compressor_frequency_hz
+        self.evaporator_coil_temp_c = evaporator_coil_temp_c
+        self.outdoor_condenser_temp_c = outdoor_condenser_temp_c
+        self.fan_stage = fan_stage
+        self.voltage_v = voltage_v
+        self.current_a = current_a
+        self.diag_error_code = diag_error_code
+        self.estimated_power_w = estimated_power_w
+        self.estimated_energy_kwh = estimated_energy_kwh
         LOGGER.debug(f"Device status: {self.__str__()}")
     
     def __str__(self):
@@ -136,6 +155,7 @@ class Device:
         self.control_topic = control_topic
         self.status_topic = status_topic
         self.connection_status_topic = connection_status_topic
+        self.diag_topic = f"{control_topic.rsplit('/', 1)[0]}/diag" if control_topic else ""
         self.broker = broker
         self.details = None
         self.model_capabilities: dict = {}
@@ -143,6 +163,8 @@ class Device:
         self.use_local_udp: bool = False
         self.controller_id: str = "ha"
         self._last_status_ts: int = 0
+        self._last_status_payload: Optional[dict] = None
+        self._estimator = InverterPowerEstimator()
 
         self._callbacks = set()
         if self.broker:
@@ -150,11 +172,15 @@ class Device:
             self.broker.register_device_callback(
                 self.connection_status_topic, self.connection_status_handler
             )
+            if self.diag_topic:
+                self.broker.register_device_callback(self.diag_topic, self.diag_handler)
 
     def close(self):
         if self.broker:
             self.broker.remove_device_callback(self.status_topic)
             self.broker.remove_device_callback(self.connection_status_topic)
+            if self.diag_topic:
+                self.broker.remove_device_callback(self.diag_topic)
         if self.udp_transport:
             self.udp_transport.unregister_device(self.id)
         
@@ -279,6 +305,23 @@ class Device:
             except (ValueError, TypeError):
                 pass
 
+        if isinstance(status, dict):
+            if self._last_status_payload is None:
+                self._last_status_payload = dict(status)
+            else:
+                self._last_status_payload.update(status)
+
+        if power_mode == PowerMode.OFF:
+            comp_hz = None
+            out_temp = None
+            volt_v = None
+            curr_a = None
+        else:
+            comp_hz = getattr(cur, "compressor_frequency_hz", None)
+            out_temp = getattr(cur, "outdoor_condenser_temp_c", None)
+            volt_v = getattr(cur, "voltage_v", None)
+            curr_a = getattr(cur, "current_a", None)
+
         status_obj = DeviceStatus(
             is_online=is_online,
             temperature=temp,
@@ -298,9 +341,73 @@ class Device:
             warning_code=str(status.get("warnings", getattr(cur, "warning_code", "")) or ""),
             wifi_signal=wifi_sig,
             control_source=status.get("cnt", getattr(cur, "control_source", "an")),
+            compressor_frequency_hz=comp_hz,
+            evaporator_coil_temp_c=getattr(cur, "evaporator_coil_temp_c", None),
+            outdoor_condenser_temp_c=out_temp,
+            fan_stage=getattr(cur, "fan_stage", None),
+            voltage_v=volt_v,
+            current_a=curr_a,
+            diag_error_code=getattr(cur, "diag_error_code", ""),
+            estimated_power_w=None,
+            estimated_energy_kwh=None,
         )
 
         self.set_status(status_obj)
+        self.refresh()
+
+    def diag_handler(self, payload: Any) -> None:
+        """Handle incoming .../diag MQTT telemetry frames."""
+        if not isinstance(payload, dict):
+            return
+        di_a = payload.get("di_a")
+        if not di_a or not isinstance(di_a, list):
+            return
+        latest_frame = next((f for f in reversed(di_a) if isinstance(f, str)), None)
+        if not latest_frame:
+            return
+        try:
+            import base64
+            raw_hex = base64.b64decode(latest_frame).hex(" ")
+        except Exception:
+            raw_hex = latest_frame
+        decoded = decode_diagnostic_frame(latest_frame)
+        LOGGER.debug(
+            "MirAIe /diag frame (device=%s, count=%s, in_s=%s): raw_hex=[%s] decoded=%s",
+            self.id,
+            len(di_a),
+            payload.get("in_s"),
+            raw_hex,
+            decoded,
+        )
+        if not decoded:
+            return
+
+        cur = getattr(self, "status", None)
+        if cur is None:
+            return
+
+        is_outdoor_off = (
+            decoded.get("outdoor_condenser_temp_c", 0) == 0
+            and decoded.get("compressor_frequency_hz", 0) == 0
+            and decoded.get("voltage_v", 0) == 0
+        )
+        if "compressor_frequency_hz" in decoded:
+            cur.compressor_frequency_hz = decoded["compressor_frequency_hz"]
+        if "evaporator_coil_temp_c" in decoded:
+            cur.evaporator_coil_temp_c = decoded["evaporator_coil_temp_c"]
+        if "outdoor_condenser_temp_c" in decoded:
+            cur.outdoor_condenser_temp_c = None if is_outdoor_off else decoded["outdoor_condenser_temp_c"]
+        if "fan_stage" in decoded:
+            cur.fan_stage = decoded["fan_stage"]
+        if "voltage_v" in decoded:
+            cur.voltage_v = None if is_outdoor_off else decoded["voltage_v"]
+        if "current_a" in decoded:
+            cur.current_a = None if is_outdoor_off else decoded["current_a"]
+        if "error_code" in decoded:
+            cur.diag_error_code = decoded["error_code"]
+
+        self._update_power_estimate(cur)
+
         self.refresh()
 
     def connection_status_handler(self, status: any):
@@ -309,6 +416,9 @@ class Device:
 
     def set_details(self, details: DeviceDetails):
         self.details = details
+        self._estimator.profile = ACInverterProfile.from_model(
+            getattr(details, "model_number", "")
+        )
         if self.udp_transport:
             if not self.supports_local_udp:
                 self.udp_transport.unregister_device(self.id)
@@ -521,7 +631,35 @@ class Device:
                 raise
         await self.send_cloud_command(broker_coro)
 
+    def _build_estimator_payload(self, status_obj: DeviceStatus) -> dict[str, Any]:
+        """Build a complete status payload for the power estimator from DeviceStatus."""
+        return {
+            "ps": "on" if status_obj.power_mode == PowerMode.ON else "off",
+            "acmd": status_obj.hvac_mode.value if hasattr(status_obj.hvac_mode, "value") else str(status_obj.hvac_mode),
+            "acfs": status_obj.fan_mode.value if hasattr(status_obj.fan_mode, "value") else str(status_obj.fan_mode),
+            "cnv": status_obj.converti_mode.value if hasattr(status_obj.converti_mode, "value") else int(status_obj.converti_mode or 0),
+            "actmp": status_obj.temperature,
+            "rmtmp": status_obj.room_temperature,
+        }
+
+    def _update_power_estimate(self, status_obj: DeviceStatus) -> None:
+        """Update estimated power and cumulative energy on a DeviceStatus instance."""
+        firmware_version = getattr(getattr(self, "details", None), "firmware_version", "")
+        comp_hz = None if status_obj.power_mode == PowerMode.OFF else status_obj.compressor_frequency_hz
+        out_temp = None if status_obj.power_mode == PowerMode.OFF else status_obj.outdoor_condenser_temp_c
+        est_power = self._estimator.process_telemetry(
+            self._build_estimator_payload(status_obj),
+            external_room_temp=status_obj.room_temperature,
+            firmware_version=firmware_version,
+            compressor_hz=comp_hz,
+            outdoor_temp_c=out_temp,
+        )
+        status_obj.estimated_power_w = est_power
+        status_obj.estimated_energy_kwh = round(self._estimator.cumulative_energy_kwh, 4)
+
     def set_status(self, status: DeviceStatus):
+        if status.estimated_power_w is None:
+            self._update_power_estimate(status)
         self.status = status
 
     async def turn_on(self, transport: str | None = None):

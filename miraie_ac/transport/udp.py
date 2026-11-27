@@ -404,10 +404,11 @@ class LocalUdpTransportManager:
             mac_part = rsp_str[len(DISCOVERY_RSP_PREFIX) :]
             _LOGGER.debug("Received discovery response from %s for MAC %s", sender_ip, mac_part)
 
-            # Update known device IP
+            # Update known device IP and refresh reachability timestamp
             for dev in self._devices.values():
                 if dev.mac == mac_part:
                     dev.ip_address = sender_ip
+                    dev.last_seen = time.time()
                     self._seen_device_ips[dev.device_id] = sender_ip
 
             # Fulfill pending discovery future
