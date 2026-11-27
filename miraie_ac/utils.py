@@ -1,6 +1,7 @@
 # Write a function check if the given string is a valid email address.
 
 import re
+from typing import Any
 
 
 def is_valid_email(addr):
